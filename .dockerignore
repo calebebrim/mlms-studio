@@ -1,0 +1,20 @@
+# Contexto raiz usado por `mlms-worker` (compose/Tilt): incluir só o que entra na imagem.
+# Isso evita rebuilds quando LaTeX, docs ou a SPA mudam (ver Tiltfile).
+
+target
+**/target/
+.git
+.cursor
+
+# Artigo e artefactos LaTeX — não entram na imagem do worker.
+latex/
+
+# Documentação e frontend não fazem parte do build Rust do worker.
+docs/
+projeto-web/
+
+projeto-web/node_modules
+projeto-web/dist
+
+services/mlms-api/node_modules
+services/mlms-api/dist

@@ -1,3 +1,16 @@
+/target/
+**/target/
+
+services/mlms-api/node_modules/
+services/mlms-api/dist/
+
+# Segredos e overrides locais — manter apenas ficheiros `*.example` versionados.
+.env
+.env.local
+.env.*.local
+!.env.example
+!**/.env.example
+
 mlmssoftware-code-r7.zip
 *.exe
 *.mat

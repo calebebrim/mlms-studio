@@ -1,0 +1,49 @@
+# Stack local: worker Rust (imagem release) + Vite dev com bind-mount.
+# docker compose up --build
+# curl http://127.0.0.1:8080/health  |  BFF http://127.0.0.1:3000/api/v1/health  |  UI http://127.0.0.1:5173
+#
+# Variáveis sensíveis: usar `.env` na raiz (não commitado); modelo em `.env.example`.
+# docs/security/secrets-gcp-tilt-ci.md
+
+services:
+  mlms-worker:
+    build:
+      context: .
+      dockerfile: services/mlms-worker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      MLMS_WORKER_PORT: "8080"
+      # Opcional: alinhar com mlms-api e web (proxy) quando usar auth interna
+      # MLMS_WORKER_INTERNAL_TOKEN: ${MLMS_WORKER_INTERNAL_TOKEN}
+
+  mlms-api:
+    build:
+      context: .
+      dockerfile: services/mlms-api/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      MLMS_WORKER_URL: http://mlms-worker:8080
+      MLMS_WORKER_INTERNAL_TOKEN: ${MLMS_WORKER_INTERNAL_TOKEN:-}
+    depends_on:
+      - mlms-worker
+
+  web:
+    build:
+      context: ./projeto-web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    environment:
+      MLMS_API_PROXY_TARGET: http://mlms-api:3000
+    volumes:
+      - ./projeto-web:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      - mlms-worker
+      - mlms-api
+
+volumes:
+  web_node_modules:
