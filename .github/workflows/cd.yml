@@ -111,7 +111,7 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    if: ${{ vars.GKE_CLUSTER_NAME != '' }}
+    if: ${{ vars.GKE_CLUSTER_NAME != '' && vars.GKE_CLUSTER_LOCATION != '' }}
     steps:
       - uses: actions/checkout@v4
 
