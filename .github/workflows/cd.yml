@@ -1,0 +1,167 @@
+# CD — Artifact Registry + GKE (mlms-worker) + Cloud Run (front nginx).
+# Alinhado a docs/adr/0003-cloud-run-vs-gke.md e docs/devops/github-actions-cd.md
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Ambiente de destino (namespaces e sufixo Cloud Run)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+concurrency:
+  group: cd-${{ github.workflow }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO }}
+
+jobs:
+  build-and-push:
+    name: Build e push (worker + web)
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      worker_image: ${{ steps.images.outputs.worker_image }}
+      web_image: ${{ steps.images.outputs.web_image }}
+      k8s_namespace: ${{ steps.images.outputs.k8s_namespace }}
+      cloud_run_service: ${{ steps.images.outputs.cloud_run_service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar variáveis obrigatórias
+        run: |
+          missing=""
+          for name in GCP_REGION GCP_PROJECT_ID ARTIFACT_REPO; do
+            v="${!name}"
+            if [ -z "$v" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Configure GitHub Variables: $missing (ver docs/devops/github-actions-cd.md)"
+            exit 1
+          fi
+
+      - name: Resolver namespace e serviço Cloud Run
+        id: images
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)       NS="mlms-dev" ;;
+            staging)   NS="mlms-staging" ;;
+            prod)      NS="mlms-prod" ;;
+            *)         NS="mlms-dev" ;;
+          esac
+          if [ -n "${{ vars.K8S_NAMESPACE }}" ]; then
+            NS="${{ vars.K8S_NAMESPACE }}"
+          fi
+          if [ -n "${{ vars.CLOUD_RUN_SERVICE_WEB_PREFIX }}" ]; then
+            SVC="${{ vars.CLOUD_RUN_SERVICE_WEB_PREFIX }}-${{ inputs.environment }}"
+          else
+            SVC="mlms-web-${{ inputs.environment }}"
+          fi
+          REG_HOST="${GCP_REGION}-docker.pkg.dev"
+          WORKER_IMG="${REG_HOST}/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/mlms-worker:${GITHUB_SHA}"
+          WEB_IMG="${REG_HOST}/${GCP_PROJECT_ID}/${ARTIFACT_REPO}/mlms-web:${GITHUB_SHA}"
+          echo "worker_image=${WORKER_IMG}" >> "$GITHUB_OUTPUT"
+          echo "web_image=${WEB_IMG}" >> "$GITHUB_OUTPUT"
+          echo "k8s_namespace=${NS}" >> "$GITHUB_OUTPUT"
+          echo "cloud_run_service=${SVC}" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Docker auth (Artifact Registry)
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build e push mlms-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/mlms-worker/Dockerfile
+          push: true
+          tags: ${{ steps.images.outputs.worker_image }}
+
+      - name: Build e push web (nginx)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./projeto-web
+          file: projeto-web/Dockerfile
+          push: true
+          tags: ${{ steps.images.outputs.web_image }}
+
+  deploy-gke:
+    name: Deploy GKE (mlms-worker)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    if: ${{ vars.GKE_CLUSTER_NAME != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GKE_CLUSTER_LOCATION }}
+
+      - name: Namespace e manifests
+        env:
+          K8S_NAMESPACE: ${{ needs.build-and-push.outputs.k8s_namespace }}
+          WORKER_IMAGE: ${{ needs.build-and-push.outputs.worker_image }}
+        run: |
+          kubectl get namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$K8S_NAMESPACE"
+          kubectl apply -f infra/k8s/mlms-worker/ -n "$K8S_NAMESPACE"
+          kubectl set image deployment/mlms-worker mlms-worker="$WORKER_IMAGE" -n "$K8S_NAMESPACE"
+          kubectl rollout status deployment/mlms-worker -n "$K8S_NAMESPACE" --timeout=300s
+
+  deploy-cloud-run:
+    name: Deploy Cloud Run (web)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy serviço
+        env:
+          SERVICE: ${{ needs.build-and-push.outputs.cloud_run_service }}
+          IMAGE: ${{ needs.build-and-push.outputs.web_image }}
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image="$IMAGE" \
+            --region="${{ vars.GCP_REGION }}" \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --platform=managed \
+            --port=80 \
+            --allow-unauthenticated \
+            --quiet

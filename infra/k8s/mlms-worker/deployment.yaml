@@ -1,0 +1,42 @@
+# Manifesto base — a imagem é definida no deploy (kubectl set image).
+# Ver docs/devops/github-actions-cd.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlms-worker
+  labels:
+    app: mlms-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlms-worker
+  template:
+    metadata:
+      labels:
+        app: mlms-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: mlms-worker
+          image: mlms-worker:deploy-placeholder
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: MLMS_WORKER_PORT
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
