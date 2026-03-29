@@ -1,0 +1,1 @@
+Simply unzip all the files in the same folder and then, in Matlab, type: echodemo('demo.m');
