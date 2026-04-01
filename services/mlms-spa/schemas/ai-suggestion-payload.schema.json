@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mlms-studio.local/schemas/ai-suggestion-payload.json",
+  "title": "MLMS-Studio Modo IA — payload de sugestão (LLM → BFF)",
+  "type": "object",
+  "required": ["schema_version", "rationale", "suggested_actions", "citations"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Versão do contrato; o BFF rejeita versões não suportadas."
+    },
+    "insufficient_context": {
+      "type": "boolean",
+      "description": "Se true, suggested_actions pode ser vazio e rationale explica o que falta."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Explicação curta para a UI; sem dados sensíveis."
+    },
+    "suggested_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action_id", "label", "risk", "requires_confirmation", "payload"],
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "description": "Identificador estável do tipo de ação (ex. enqueue_preprocess_job)."
+          },
+          "label": {
+            "type": "string",
+            "description": "Texto apresentado ao utilizador."
+          },
+          "risk": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "requires_confirmation": {
+            "type": "boolean",
+            "description": "No MVP, high e medium devem ser true; low pode ser false só para leituras já autorizadas."
+          },
+          "payload": {
+            "type": "object",
+            "description": "Argumentos validados contra o contrato de job/OpenAPI antes de enqueue.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "citations": {
+      "type": "array",
+      "description": "Referências a chunks RAG ou artefactos versionados.",
+      "items": {
+        "type": "object",
+        "required": ["ref_kind", "ref_id"],
+        "properties": {
+          "ref_kind": {
+            "type": "string",
+            "enum": ["rag_chunk", "api_version", "adr", "job_metadata"]
+          },
+          "ref_id": { "type": "string" },
+          "title": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

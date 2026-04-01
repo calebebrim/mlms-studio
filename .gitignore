@@ -3,6 +3,7 @@
 
 services/mlms-api/node_modules/
 services/mlms-api/dist/
+services/mlms-api/data/
 
 # Segredos e overrides locais — manter apenas ficheiros `*.example` versionados.
 .env

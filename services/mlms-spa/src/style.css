@@ -1,0 +1,31 @@
+:root {
+  color-scheme: dark;
+  --shell-bg: #0b0c10;
+  --shell-fg: #e5e7eb;
+  --shell-border: #27272f;
+  --shell-muted: #9ca3af;
+  --accent: #c084fc;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  background: var(--shell-bg);
+  color: var(--shell-fg);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+}

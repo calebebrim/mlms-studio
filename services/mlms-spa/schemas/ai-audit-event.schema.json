@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mlms-studio.local/schemas/ai-audit-event.json",
+  "title": "MLMS-Studio AI audit event (append-only)",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "project_id",
+    "sequence"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador imutável do evento."
+    },
+    "parent_event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Evento relacionado (ex.: resposta a llm_request)."
+    },
+    "correction_of": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Se presente, este evento corrige ou esclarece um evento anterior sem apagar o original."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "cycle_started",
+        "context_built",
+        "llm_request",
+        "llm_response",
+        "tool_call",
+        "tool_result",
+        "human_decision",
+        "job_enqueued",
+        "cycle_completed",
+        "cycle_failed",
+        "policy_denied"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp UTC ISO-8601."
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Tenant/projeto para RBAC e partição."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Sessão de utilizador ou ciclo de UI."
+    },
+    "cycle_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Agrupa eventos de um único ciclo de Modo IA."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Ordem monotónica por project_id (ou por cycle_id se preferido na implementação)."
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["user", "agent", "system", "service"]
+        },
+        "id": { "type": "string" },
+        "display_name": { "type": "string" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "description": "Dados específicos do tipo de evento; evitar segredos em claro.",
+      "additionalProperties": true
+    },
+    "content_ref": {
+      "type": "object",
+      "description": "Ponteiro para blob externo (prompt/resposta longa).",
+      "properties": {
+        "uri": { "type": "string" },
+        "sha256": { "type": "string" },
+        "byte_length": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "additionalProperties": false
+}

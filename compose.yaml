@@ -7,17 +7,24 @@
 
 services:
   mlms-worker:
+    # Nome estável para o Tilt associar `docker_build` ao serviço (evita rebuild em cadeia).
+    image: mlms-studio-worker:dev
     build:
       context: .
       dockerfile: services/mlms-worker/Dockerfile
     ports:
       - "8080:8080"
+    volumes:
+      # Bind mount: pasta no host configurável via MLMS_HOST_DATA_DIR no `.env` da raiz
+      # (Tilt/Compose carregam esse ficheiro). Por omissão: ./services/mlms-api/data
+      - ${MLMS_HOST_DATA_DIR:-./data}:/var/mlms/data
     environment:
       MLMS_WORKER_PORT: "8080"
       # Opcional: alinhar com mlms-api e web (proxy) quando usar auth interna
       # MLMS_WORKER_INTERNAL_TOKEN: ${MLMS_WORKER_INTERNAL_TOKEN}
 
   mlms-api:
+    image: mlms-studio-api:dev
     build:
       context: .
       dockerfile: services/mlms-api/Dockerfile
@@ -27,19 +34,27 @@ services:
       PORT: "3000"
       MLMS_WORKER_URL: http://mlms-worker:8080
       MLMS_WORKER_INTERNAL_TOKEN: ${MLMS_WORKER_INTERNAL_TOKEN:-}
+      MLMS_DATA_VOLUME_PREFIX: /var/mlms/data
+      MLMS_DATASETS_STORE_PATH: /var/mlms/data/datasets.json
+      MLMS_EXPERIMENTS_STORE_PATH: /var/mlms/data/experiments.json
+    volumes:
+      # Bind mount: pasta no host configurável via MLMS_HOST_DATA_DIR no `.env` da raiz
+      # (Tilt/Compose carregam esse ficheiro). Por omissão: ./services/mlms-api/data
+      - ${MLMS_HOST_DATA_DIR:-./data}:/var/mlms/data
     depends_on:
       - mlms-worker
 
   web:
+    image: mlms-studio-web:dev
     build:
-      context: ./projeto-web
+      context: ./services/mlms-spa
       dockerfile: Dockerfile.dev
     ports:
       - "5173:5173"
     environment:
       MLMS_API_PROXY_TARGET: http://mlms-api:3000
     volumes:
-      - ./projeto-web:/app
+      - ./services/mlms-spa:/app
       - web_node_modules:/app/node_modules
     depends_on:
       - mlms-worker

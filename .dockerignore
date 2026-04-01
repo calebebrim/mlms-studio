@@ -11,10 +11,10 @@ latex/
 
 # Documentação e frontend não fazem parte do build Rust do worker.
 docs/
-projeto-web/
+services/mlms-spa/
 
-projeto-web/node_modules
-projeto-web/dist
+services/mlms-spa/node_modules
+services/mlms-spa/dist
 
 services/mlms-api/node_modules
 services/mlms-api/dist

@@ -23,6 +23,12 @@
 #   ambas as listas se começarem a causar ruído.
 # - Pacotes partilhados futuros entre API e worker devem retirar-se dos `ignore` ou usar deps
 #   explícitas.
+#
+# --- Paralelismo de builds (brief SOF-1 / board) ---
+# Garantir que as três imagens declaradas abaixo (worker, API, web) podem atualizar em
+# paralelo; o limite omissão do Tilt é baixo e pode serializar stacks maiores. Em máquinas
+# com pouca RAM/CPU, reduzir localmente (ex.: max_parallel_updates=1) ou fechar serviços.
+update_settings(max_parallel_updates=6)
 
 docker_compose('./compose.yaml')
 

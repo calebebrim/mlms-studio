@@ -101,8 +101,8 @@ jobs:
       - name: Build e push web (nginx)
         uses: docker/build-push-action@v6
         with:
-          context: ./projeto-web
-          file: projeto-web/Dockerfile
+          context: ./services/mlms-spa
+          file: services/mlms-spa/Dockerfile
           push: true
           tags: ${{ steps.images.outputs.web_image }}
 

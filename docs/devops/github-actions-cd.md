@@ -44,7 +44,7 @@ Manifestos base: [`infra/k8s/mlms-worker/`](../../infra/k8s/mlms-worker/). O pip
 
 ## Cloud Run (web)
 
-O serviço nginx escuta na porta **80** (`projeto-web/Dockerfile`). O deploy usa `--allow-unauthenticated` para o front público; em produção restrita, substituir por IAM / Load Balancer conforme o desenho de tráfego (ADR 0003).
+O serviço nginx escuta na porta **80** (`services/mlms-spa/Dockerfile`). O deploy usa `--allow-unauthenticated` para o front público; em produção restrita, substituir por IAM / Load Balancer conforme o desenho de tráfego (ADR 0003).
 
 ## Pré-requisitos na GCP (resumo)
 

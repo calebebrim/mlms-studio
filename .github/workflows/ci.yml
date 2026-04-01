@@ -47,11 +47,11 @@ jobs:
         run: cargo test -p mlms-worker
 
   web:
-    name: Vue (projeto-web)
+    name: Vue (mlms-spa)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: projeto-web
+        working-directory: services/mlms-spa
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +59,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: projeto-web/package-lock.json
+          cache-dependency-path: services/mlms-spa/package-lock.json
 
       - name: Install and build
         run: |
@@ -77,4 +77,4 @@ jobs:
         run: docker build -f services/mlms-worker/Dockerfile -t mlms-worker:ci .
 
       - name: Build imagem web (nginx)
-        run: docker build -f projeto-web/Dockerfile -t mlms-web:ci projeto-web
+        run: docker build -f services/mlms-spa/Dockerfile -t mlms-web:ci services/mlms-spa

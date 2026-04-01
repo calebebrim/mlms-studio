@@ -1,0 +1,1600 @@
+openapi: 3.0.3
+info:
+  title: MLMS Studio — API Node (BFF)
+  description: |
+    **v0** — contrato público consumido pelo SPA Vue. Versionamento por path conforme [ADR 0004](../adr/0004-api-versioning.md): prefixo `/api/v1/`.
+
+    **Orquestração:** o BFF regista jobs (incluindo **`mlms.experiment_snapshot`** — snapshot inline ou carregado de `/experiments` via `experiment_id` + `pipeline_revision_id`), pode sincronizar com o worker Rust no MVP e expõe consulta, cancelamento e *stream* SSE do estado.
+
+    **Fronteira BFF ↔ worker:** [ADR 0005](../adr/0005-node-bff-rust-worker-boundary.md).
+
+    **Worker Rust (interno):** não faz parte deste surface path; ver documentação irmã em
+    [`services/mlms-worker/docs/NODE_CONTRACT.md`](../../services/mlms-worker/docs/NODE_CONTRACT.md)
+    (`GET /health`, `GET /ready`, `POST /v1/jobs` na base do worker, ex. `http://127.0.0.1:8080`;
+    corpo acima do limite → **413** no worker; erros de negócio em `POST /v1/jobs` → **422** com `JobError` no JSON do worker).
+    Payloads e códigos de erro do worker devem permanecer alinhados a esse ficheiro quando o Node fizer *proxy* ou chamadas HTTP internas.
+    O BFF mapeia a resposta síncrona do worker (`job_id`, `status`, `result`, `error`) para o schema `Job` público (`id` ≡ `job_id` do worker, timestamps preenchidos pelo Node).
+
+    **SSE vs WebSocket:** MVP recomenda **SSE** para eventos unidirecionais de job; WebSocket fica fora deste v0 salvo ADR futuro.
+
+    **`job_type` (MVP):** lista fechada `mlms.echo`, `mlms.pipeline_stub`, `mlms.genetic_algorithm`, `mlms.watchpoints`, `mlms.mlp`, `mlms.random_forest` e `mlms.experiment_snapshot`, igual ao binário `mlms-worker` e a [`NODE_CONTRACT.md`](../../services/mlms-worker/docs/NODE_CONTRACT.md). Novos tipos exigem alteração conjunta deste spec, do BFF, do worker e alinhamento de domínio (task **SOF-28**).
+  version: 0.1.0
+  contact:
+    name: MLMS Studio / Fullstack Forge
+
+servers:
+  - url: /
+    description: Origem do serviço Node (path absoluto inclui `/api/v1`)
+
+tags:
+  - name: Health
+    description: Liveness do BFF (pode ficar sem autenticação em dev).
+  - name: Jobs
+    description: |
+      Criação, leitura, cancelamento e eventos de jobs. Suporta `mlms.experiment_snapshot` (payload inline ou revisão persistida — ver `CreateExperimentSnapshotJobRequest`).
+  - name: Datasets
+    description: |
+      Metadados de datasets e referência estável a artefactos no volume montado (`MLMS_DATA_VOLUME_PREFIX`).
+      `POST /datasets/upload` grava o binário no volume; os restantes endpoints são CRUD lógico, tags e JSON `metadata`.
+  - name: Experiments
+    description: |
+      Experimentos com revisões **append-only** de `PipelineSpec` (ficheiro JSON no BFF, `MLMS_EXPERIMENTS_STORE_PATH`).
+      Cada revisão é imutável; jobs `mlms.experiment_snapshot` podem referenciar `experiment_id` + `pipeline_revision_id`.
+
+paths:
+  /api/v1/health:
+    get:
+      tags: [Health]
+      summary: Health do API Node
+      description: Verificação de disponibilidade do BFF (distinta do `GET /health` do `mlms-worker`).
+      security: []
+      operationId: getApiHealth
+      responses:
+        "200":
+          description: Serviço disponível
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHealth"
+              example:
+                status: ok
+                service: mlms-api
+                version: "0.1.0"
+
+  /api/v1/jobs:
+    post:
+      tags: [Jobs]
+      summary: Submeter job
+      description: |
+        Cria um job. **MVP:** o Node pode responder após execução síncrona no worker (`201` com estado terminal) ou aceitar de forma assíncrona (`202` com estado `queued`/`running`).
+        Clientes devem tratar ambos conforme o código HTTP e o corpo `Job`.
+        Idempotência: enviar `idempotency_key` (ou `job_id` quando acordado) para dedupe no BFF ao reencaminhar ao worker.
+      operationId: createJob
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateJobRequest"
+            examples:
+              echo:
+                summary: mlms.echo
+                value:
+                  job_type: mlms.echo
+                  payload: { "x": 1 }
+              pipeline_stub:
+                summary: mlms.pipeline_stub
+                value:
+                  job_type: mlms.pipeline_stub
+                  payload: { "stage": "integration-test" }
+              genetic_algorithm:
+                summary: mlms.genetic_algorithm
+                value:
+                  job_type: mlms.genetic_algorithm
+                  payload:
+                    population_size: 50
+                    generations: 100
+                    crossover_rate: 0.8
+                    mutation_rate: 0.01
+                    ga_profile: matlab_stub
+                    outer_iterations: 3
+                    mz: [100.0, 200.0, 300.0]
+                    intensity: [1.0, 2.0, 3.0]
+              watchpoints:
+                summary: mlms.watchpoints
+                value:
+                  job_type: mlms.watchpoints
+                  payload:
+                    spectrum_ref: study-1/run-a
+                    mz: [100.0, 200.0, 300.0]
+                    intensity: [1.0, 2.0, 3.0]
+                    watchpoint_positions: [200.0, 150.0]
+              mlp:
+                summary: mlms.mlp (camada tanh determinística)
+                value:
+                  job_type: mlms.mlp
+                  payload:
+                    input: [1.0, -0.5, 2.0]
+                    out_dim: 4
+                    seed: 42
+              random_forest:
+                summary: mlms.random_forest (stub — vector input, paridade com model.rf_stub)
+                value:
+                  job_type: mlms.random_forest
+                  payload:
+                    input: [0.2, 0.8, -0.1]
+                    n_trees: 10
+                    n_classes: 3
+                    seed: 42
+              experiment_snapshot:
+                summary: mlms.experiment_snapshot (inline, cadeia GA → MLP → stats)
+                value:
+                  job_type: mlms.experiment_snapshot
+                  payload:
+                    snapshot_version: 1
+                    experiment_id: study-1
+                    stages:
+                      - id: ingest
+                        kind: preprocess.canonical_spectrum
+                        params:
+                          mz: [100.0, 200.0, 300.0]
+                          intensity: [1.0, 2.0, 3.0]
+                      - kind: features.watchpoints
+                        params:
+                          spectrum_ref: study-1/run-a
+                          watchpoint_positions: [200.0, 150.0]
+                      - kind: model.genetic_algorithm_summary
+                        params:
+                          population_size: 50
+                          generations: 100
+                          crossover_rate: 0.8
+                          mutation_rate: 0.01
+                          ga_profile: matlab_stub
+                          outer_iterations: 3
+                      - kind: model.mlp_stub
+                        params:
+                          seed: 42
+                          out_dim: 4
+                      - kind: eval.vector_stats
+                        params: {}
+              experiment_snapshot_envelope:
+                summary: mlms.experiment_snapshot (envelope BFF → worker)
+                value:
+                  job_type: mlms.experiment_snapshot
+                  payload:
+                    schema_version: 1
+                    payload:
+                      snapshot_version: 1
+                      stages:
+                        - kind: preprocess.canonical_spectrum
+                          params:
+                            mz: [100.0, 200.0, 300.0]
+                            intensity: [1.0, 2.0, 3.0]
+                        - kind: eval.vector_stats
+                          params: {}
+              experiment_snapshot_from_revision:
+                summary: mlms.experiment_snapshot (revisão persistida no BFF)
+                value:
+                  job_type: mlms.experiment_snapshot
+                  experiment_id: "550e8400-e29b-41d4-a716-446655440001"
+                  pipeline_revision_id: "660e8400-e29b-41d4-a716-446655440002"
+      responses:
+        "201":
+          description: Job concluído no mesmo ciclo de pedido (caminho síncrono / *stub*).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "202":
+          description: Job aceite para processamento assíncrono
+          headers:
+            Location:
+              description: URI do recurso `GET /api/v1/jobs/{jobId}`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: |
+            Corpo do pedido excede o limite aceite pelo destino (o worker MVP limita `POST /v1/jobs` a 256 KiB;
+            ver [`NODE_CONTRACT.md`](../../services/mlms-worker/docs/NODE_CONTRACT.md)). O BFF deve propagar ou espelhar este código quando aplicável.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "409":
+          description: Conflito de idempotência ou estado inválido para nova submissão
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: Corpo válido mas rejeitado (ex. `job_type` desconhecido no destino)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/jobs/{jobId}:
+    get:
+      tags: [Jobs]
+      summary: Obter job por ID
+      operationId: getJobById
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/jobs/{jobId}/cancel:
+    post:
+      tags: [Jobs]
+      summary: Solicitar cancelamento do job
+      description: |
+        Best-effort: jobs já `completed`, `failed` ou `cancelled` devem responder com erro de conflito.
+      operationId: cancelJob
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Cancelamento aceite ou job já cancelado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Job em estado terminal que não admite cancelamento
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/jobs/{jobId}/events:
+    get:
+      tags: [Jobs]
+      summary: Stream de eventos do job (SSE)
+      description: |
+        `Content-Type: text/event-stream`. Cada evento usa o formato SSE padrão (`event:`, `data:`).
+        O campo `data` é JSON com o mesmo esquema lógico que `JobEvent` (snapshot ou delta acordado na implementação Nest).
+
+        **Reconexão:** clientes devem usar `Last-Event-ID` quando suportado pelo servidor.
+
+        **Nota v0:** num *stub* síncrono, o servidor pode emitir um único evento terminal e fechar o stream.
+      operationId: streamJobEvents
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Stream aberto
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Exemplo de linhas:
+                  ```
+                  event: job
+                  data: {"job_id":"550e8400-e29b-41d4-a716-446655440000","status":"running"}
+
+                  event: job
+                  data: {"job_id":"550e8400-e29b-41d4-a716-446655440000","status":"completed","result":{}}
+                  ```
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/datasets:
+    get:
+      tags: [Datasets]
+      summary: Listar datasets
+      description: |
+        Por defeito exclui registos com eliminação lógica. Use `include_deleted=true` para auditoria.
+      operationId: listDatasets
+      parameters:
+        - name: tag
+          in: query
+          required: false
+          description: Filtrar por etiqueta (case-insensitive).
+          schema:
+            type: string
+            maxLength: 128
+        - name: include_deleted
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Lista de datasets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Dataset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Datasets]
+      summary: Criar registo de dataset
+      description: |
+        `storage_ref` é um caminho lógico **relativo** ao prefixo do volume; segmentos `..` são rejeitados (mitiga path traversal).
+      operationId: createDataset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDatasetRequest"
+      responses:
+        "201":
+          description: Criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dataset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/datasets/upload:
+    post:
+      tags: [Datasets]
+      summary: Carregar ficheiro e criar dataset
+      description: |
+        `multipart/form-data` com `file` obrigatório. O BFF grava o binário sob
+        `MLMS_DATA_VOLUME_PREFIX/uploads/<uuid>/<filename>` e cria o registo com `storage_ref` correspondente.
+        Campos opcionais: `name`, `description`, `tags` (vírgulas), `metadata` (JSON object em string, fundido com campos técnicos).
+      operationId: uploadDataset
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+                  maxLength: 512
+                description:
+                  type: string
+                tags:
+                  type: string
+                  description: Lista separada por vírgulas
+                metadata:
+                  type: string
+                  description: JSON object opcional
+      responses:
+        "201":
+          description: Criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dataset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: Ficheiro acima do limite configurado no BFF (MVP 50 MiB)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/datasets/{datasetId}:
+    get:
+      tags: [Datasets]
+      summary: Obter dataset por id
+      description: Não devolve registos eliminados logicamente (`404`).
+      operationId: getDatasetById
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "200":
+          description: Encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dataset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Datasets]
+      summary: Atualizar dataset
+      operationId: updateDataset
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDatasetRequest"
+      responses:
+        "200":
+          description: Atualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dataset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Datasets]
+      summary: Eliminação lógica
+      operationId: deleteDataset
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "200":
+          description: Estado após soft-delete (`deleted_at` preenchido)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dataset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/experiments:
+    post:
+      tags: [Experiments]
+      summary: Criar experimento
+      description: Registo vazio de experimento; revisões de pipeline são adicionadas com `POST .../revisions`.
+      operationId: createExperiment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExperimentRequest"
+      responses:
+        "201":
+          description: Criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/experiments/{experimentId}:
+    get:
+      tags: [Experiments]
+      summary: Obter experimento e sumários das revisões
+      operationId: getExperimentById
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/experiments/{experimentId}/revisions:
+    post:
+      tags: [Experiments]
+      summary: Anexar revisão imutável de PipelineSpec
+      description: Valida `spec` antes de gravar; não altera revisões anteriores.
+      operationId: appendPipelineRevision
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppendPipelineRevisionRequest"
+      responses:
+        "201":
+          description: Revisão criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineRevisionDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/experiments/{experimentId}/revisions/{revisionId}:
+    get:
+      tags: [Experiments]
+      summary: Ler revisão congelada
+      operationId: getPipelineRevisionById
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+        - $ref: "#/components/parameters/PipelineRevisionId"
+      responses:
+        "200":
+          description: Encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineRevisionDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Sessão / OAuth (detalhes por ambiente; ver ADR 0004).
+
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      description: Identificador único do job (UUID).
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Chave opcional de idempotência para `POST /api/v1/jobs`.
+      schema:
+        type: string
+        maxLength: 256
+    DatasetId:
+      name: datasetId
+      in: path
+      required: true
+      description: Identificador do dataset (UUID).
+      schema:
+        type: string
+        format: uuid
+    ExperimentId:
+      name: experimentId
+      in: path
+      required: true
+      description: Identificador do experimento (UUID).
+      schema:
+        type: string
+        format: uuid
+    PipelineRevisionId:
+      name: revisionId
+      in: path
+      required: true
+      description: Identificador da revisão de pipeline (UUID).
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Dataset:
+      type: object
+      required:
+        - id
+        - name
+        - tags
+        - metadata
+        - storage_ref
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        storage_ref:
+          type: string
+          description: Caminho lógico sob o volume configurado no BFF.
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateDatasetRequest:
+      type: object
+      required: [name, storage_ref]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        description:
+          type: string
+          maxLength: 8192
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 128
+        metadata:
+          type: object
+          additionalProperties: true
+        storage_ref:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          example: studies/cohort-a/run-001
+
+    UpdateDatasetRequest:
+      type: object
+      description: Pelo menos um campo deve ser enviado.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        description:
+          type: string
+          maxLength: 8192
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 128
+        metadata:
+          type: object
+          additionalProperties: true
+        storage_ref:
+          type: string
+          minLength: 1
+          maxLength: 2048
+
+    CreateExperimentRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 512
+
+    PipelineRevisionSummary:
+      type: object
+      required: [id, revision_index, schema_version, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision_index:
+          type: integer
+          minimum: 0
+        schema_version:
+          type: integer
+          enum: [1]
+        created_at:
+          type: string
+          format: date-time
+
+    Experiment:
+      type: object
+      required: [id, revisions, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          nullable: true
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineRevisionSummary"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AppendPipelineRevisionRequest:
+      type: object
+      required: [spec]
+      properties:
+        spec:
+          $ref: "#/components/schemas/ExperimentSnapshotJobPayload"
+        state:
+          type: object
+          additionalProperties: true
+          description: Estado opcional persistido nesta revisão (append-only).
+
+    PipelineRevisionDetail:
+      type: object
+      required:
+        - id
+        - experiment_id
+        - revision_index
+        - schema_version
+        - spec
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        experiment_id:
+          type: string
+          format: uuid
+        revision_index:
+          type: integer
+        schema_version:
+          type: integer
+        spec:
+          type: object
+          additionalProperties: true
+        state:
+          type: object
+          nullable: true
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    ApiHealth:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: mlms-api
+        version:
+          type: string
+          description: Versão do pacote BFF (semver ou etiqueta de *build*).
+
+    JobTypeMvp:
+      type: string
+      description: Discriminadores suportados pelo worker no MVP.
+      enum:
+        - mlms.echo
+        - mlms.pipeline_stub
+        - mlms.genetic_algorithm
+        - mlms.watchpoints
+        - mlms.mlp
+        - mlms.random_forest
+        - mlms.experiment_snapshot
+
+    EchoJobPayload:
+      type: object
+      description: JSON arbitrário; o worker devolve-o em `result.echo`.
+      additionalProperties: true
+
+    PipelineStubJobPayload:
+      type: object
+      description: Parâmetros para `mlms.pipeline_stub` (ver NODE_CONTRACT.md).
+      properties:
+        stage:
+          type: string
+          description: Ecoado em `result.stage`; omissão → `"default"` no worker.
+      additionalProperties: true
+
+    GeneticAlgorithmJobPayload:
+      type: object
+      description: |
+        Parâmetros de GA + espectro 1D (`mz` / `intensity`, alinhado a `matlab-code/def_data_structure.m`);
+        o worker devolve `spectrum_summary` e não executa o GA (ver NODE_CONTRACT.md).
+      required: [population_size, generations, mz, intensity]
+      properties:
+        population_size:
+          type: integer
+          minimum: 1
+        generations:
+          type: integer
+          minimum: 1
+        crossover_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.8
+        mutation_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.01
+        ga_profile:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            Perfil nomeado de GA (recomendação SOF-53 vs espelhar `gaoptimset` completo).
+            O worker valida e ecoa; não altera o stub numérico no MVP.
+        outer_iterations:
+          type: integer
+          minimum: 1
+          description: |
+            Iterações de loop externo (conceito próximo a `cicles` em `ga_fr.m`). Aceite e ecoado; sem execução real no MVP.
+        mz:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+          description: Eixo m/z; ordenado no worker; deve ficar estritamente crescente após ordenação.
+        intensity:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+          description: Intensidade por ponto; mesmo comprimento que `mz`.
+      additionalProperties: true
+
+    WatchpointsJobPayload:
+      type: object
+      description: |
+        Espectro 1D + posições de watchpoint; o worker devolve intensidades interpoladas (ver NODE_CONTRACT.md).
+      required: [spectrum_ref, watchpoint_positions, mz, intensity]
+      properties:
+        spectrum_ref:
+          type: string
+          minLength: 1
+          description: Referência opaca ao espectro; não vazia após trim no worker.
+        watchpoint_positions:
+          type: array
+          minItems: 1
+          items:
+            type: number
+        mz:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+        intensity:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+      additionalProperties: true
+
+    MlpJobPayload:
+      type: object
+      description: |
+        Parâmetros para `mlms.mlp` (NODE_CONTRACT): uma camada densa + `tanh`, mesma semântica que `model.mlp_stub` no snapshot.
+        O worker rejeita chaves além de `input`, `out_dim` e `seed`.
+      required: [input]
+      properties:
+        input:
+          type: array
+          minItems: 1
+          maxItems: 8192
+          items:
+            type: number
+        out_dim:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 4
+        seed:
+          type: integer
+          minimum: 0
+          default: 42
+      additionalProperties: false
+
+    RandomForestJobPayload:
+      type: object
+      description: |
+        Parâmetros para `mlms.random_forest` (NODE_CONTRACT): *stub* determinístico (votação por árvores sintéticas),
+        **mesmo núcleo** que o estágio `model.rf_stub`. O worker aceita **apenas** `input`, `n_trees`, `n_classes` e `seed`.
+
+        **Wire format MVP:** um vector numérico `input` (1–8192 elementos), como `mlms.mlp` — o stub não treina com
+        dataset tabular completo.
+
+        **Roadmap tabular ([SOF-75](/SOF/issues/SOF-75#document-plan)):** *Modo A* (`train_features`, `train_labels`,
+        `test_features`, `test_labels`) e *Modo B* (matriz `features` com rótulo na última coluna + `train_fraction` /
+        *holdout*) alinham-se ao MATLAB `make_wtrts` / `nn_train_RF.m`; quando o worker suportar, este schema será
+        estendido com `oneOf` ou campos adicionais documentados em NODE_CONTRACT.
+      required: [input]
+      properties:
+        input:
+          type: array
+          minItems: 1
+          maxItems: 8192
+          items:
+            type: number
+          description: Vector de features; números finitos (mesmo limite que `mlms.mlp`).
+        n_trees:
+          type: integer
+          minimum: 1
+          maximum: 512
+          default: 10
+          description: Número de árvores sintéticas; omissão → **10** no worker (`DEFAULT_RF_TREES`).
+        n_classes:
+          type: integer
+          minimum: 2
+          maximum: 64
+          default: 2
+          description: Classes para votação; omissão → **2** no worker.
+        seed:
+          type: integer
+          minimum: 0
+          default: 42
+          description: |
+            Semente u64 em JSON (inteiro não negativo). Controla a sequência determinística de votos por árvore;
+            mesmo `seed` + mesmo `input` ⇒ mesma `predicted_class` / `predict_proba` no stub. **Não** reproduz bitwise
+            o RNG do MATLAB `TreeBagger`; paridade funcional/estatística no MVP.
+      additionalProperties: false
+
+    CanonicalSpectrumStageParams:
+      type: object
+      description: |
+        Eixo m/z e intensidades (mesmas regras que `mlms.genetic_algorithm` / NODE_CONTRACT § `preprocess.canonical_spectrum`).
+      required: [mz, intensity]
+      properties:
+        mz:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+        intensity:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+      additionalProperties: true
+
+    PksSelectMmStageParams:
+      type: object
+      description: |
+        Parâmetros alinhados ao fluxo de `matlab-code/fn_pks_select_mm.m` (pré-processamento + média móvel *fuzzy* + limiar de picos), para **um** espectro 1D (`mz`/`intensity` com o mesmo comprimento).
+
+        **Mapeamento legado MATLAB → JSON (campos em `w_data.params` e constantes):**
+
+        | Origem MATLAB | Campo JSON | Notas |
+        |---------------|------------|-------|
+        | `params.fuzzyWindow` | `fuzzy_window` | Meia-largura `vz` em `fn_mmv_fuzzy(data, vz, mode)` na suavização principal (`mmall`). |
+        | `params.pwd` | `power` | Multiplicador da curva de limiar (`sspk = mm * pwr`). |
+        | `params.show` | `show_preview` | Equivalente a `plot_peaks_selection_preview` (UI; ignorado no worker MVP). |
+        | `params.range` | `column_range` | Par `[início, fim]` (índices 1-based de colunas, inclusive). Omitir ou `[0,0]` no legado ⇒ espectro completo. |
+        | `params.use_min_as_bottonline` | `use_min_as_baseline` | Subtrai o mínimo por linha antes dos demais passos. |
+        | `params.base_line_correction_val` | `baseline_correction_half_width` | Se `> 0`, aplica `fn_mmv_fuzzy(data, val, mode)` com `mmf_mode` (padrão **5** no legado analisado). |
+        | `params.use_abs_val` | `use_absolute_value` | `abs(data)` antes da suavização principal. |
+        | `params.allocation` | `allocation` | Soma após `fn_mmv_fuzzy(...)+…` na curva `mmall`. |
+        | `fn_mmv_fuzzy` 3.º arg fixo | `mmf_mode` | No código legado citado, baseline usa modo **5**; suavização principal também modo **5** (`semivectoroial`). |
+
+        O worker MVP valida tipos e mantém o espectro no estado; **não** reproduz ainda a matemática MATLAB (ver NODE_CONTRACT).
+      required: [mz, intensity, fuzzy_window, power]
+      properties:
+        mz:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+        intensity:
+          type: array
+          minItems: 1
+          maxItems: 65536
+          items:
+            type: number
+        fuzzy_window:
+          type: integer
+          minimum: 0
+          maximum: 4096
+          description: Meia-largura da janela (vz) para `fn_mmv_fuzzy` na etapa principal.
+        power:
+          type: number
+          description: Peso da curva de limiar (legado `pwd`).
+        show_preview:
+          type: boolean
+          default: false
+        column_range:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: integer
+          description: |
+            `[lo, hi]` em índices 1-based (inclusive), como `params.range` no MATLAB. Use `[1, N]` ou omitir para espectro completo (`N` = comprimento).
+        use_min_as_baseline:
+          type: boolean
+          default: false
+        baseline_correction_half_width:
+          type: number
+          minimum: 0
+          default: 0
+          description: |
+            `0` desliga. Valor > 0 corresponde a `base_line_correction_val` (janela MMF antes da suavização principal).
+        use_absolute_value:
+          type: boolean
+          default: false
+        allocation:
+          type: number
+          default: 0
+          description: Offset somado após a MMF principal (legado `allocation`).
+        mmf_mode:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 5
+          description: |
+            Modo numérico passado a `fn_mmv_fuzzy` no legado (1–5). O trecho em `fn_pks_select_mm.m` usa **5** para baseline e suavização principal.
+      additionalProperties: true
+
+    WatchpointsOnlyStageParams:
+      type: object
+      description: |
+        `mz`/`intensity` vêm do espectro canónico em estado (NODE_CONTRACT § `features.watchpoints`).
+      required: [spectrum_ref, watchpoint_positions]
+      properties:
+        spectrum_ref:
+          type: string
+          minLength: 1
+        watchpoint_positions:
+          type: array
+          minItems: 1
+          items:
+            type: number
+      additionalProperties: true
+
+    MlpStubStageParams:
+      type: object
+      description: |
+        Camada densa uma vez (`tanh`); entrada em `input` ou último vector do estágio anterior (NODE_CONTRACT § `model.mlp_stub`).
+      properties:
+        seed:
+          type: integer
+          default: 42
+        out_dim:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 4
+        input:
+          type: array
+          maxItems: 8192
+          items:
+            type: number
+      additionalProperties: true
+
+    RfStubStageParams:
+      type: object
+      description: |
+        *Stub* RF no snapshot; mesmos campos numéricos que `RandomForestJobPayload`, com `input` opcional se já existir
+        **último vector** de um estágio anterior. O resultado expõe `predict_proba`, que passa a ser o próximo último vector.
+      properties:
+        input:
+          type: array
+          maxItems: 8192
+          items:
+            type: number
+        n_trees:
+          type: integer
+          minimum: 1
+          maximum: 512
+          default: 10
+        n_classes:
+          type: integer
+          minimum: 2
+          maximum: 64
+          default: 2
+        seed:
+          type: integer
+          minimum: 0
+          default: 42
+      additionalProperties: true
+
+    EvalVectorStatsStageParams:
+      type: object
+      description: Parâmetros vazios no MVP (`{}`).
+      additionalProperties: true
+
+    StagePreprocessCanonicalSpectrum:
+      type: object
+      required: [kind, params]
+      properties:
+        id:
+          type: string
+          description: Opcional; ecoado em `stage_results`.
+        kind:
+          type: string
+          enum: [preprocess.canonical_spectrum]
+        params:
+          $ref: "#/components/schemas/CanonicalSpectrumStageParams"
+      additionalProperties: false
+
+    StagePreprocessPksSelectMm:
+      type: object
+      required: [kind, params]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [preprocess.pks_select_mm]
+        params:
+          $ref: "#/components/schemas/PksSelectMmStageParams"
+      additionalProperties: false
+
+    StageFeaturesWatchpoints:
+      type: object
+      required: [kind, params]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [features.watchpoints]
+        params:
+          $ref: "#/components/schemas/WatchpointsOnlyStageParams"
+      additionalProperties: false
+
+    StageModelGeneticAlgorithmSummary:
+      type: object
+      required: [kind, params]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [model.genetic_algorithm_summary]
+        params:
+          $ref: "#/components/schemas/GeneticAlgorithmJobPayload"
+      additionalProperties: false
+
+    StageModelMlpStub:
+      type: object
+      required: [kind, params]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [model.mlp_stub]
+        params:
+          $ref: "#/components/schemas/MlpStubStageParams"
+      additionalProperties: false
+
+    StageModelRfStub:
+      type: object
+      required: [kind, params]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [model.rf_stub]
+        params:
+          $ref: "#/components/schemas/RfStubStageParams"
+      additionalProperties: false
+
+    StageEvalVectorStats:
+      type: object
+      required: [kind]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [eval.vector_stats]
+        params:
+          $ref: "#/components/schemas/EvalVectorStatsStageParams"
+      additionalProperties: false
+
+    ExperimentSnapshotStage:
+      oneOf:
+        - $ref: "#/components/schemas/StagePreprocessCanonicalSpectrum"
+        - $ref: "#/components/schemas/StagePreprocessPksSelectMm"
+        - $ref: "#/components/schemas/StageFeaturesWatchpoints"
+        - $ref: "#/components/schemas/StageModelGeneticAlgorithmSummary"
+        - $ref: "#/components/schemas/StageModelMlpStub"
+        - $ref: "#/components/schemas/StageModelRfStub"
+        - $ref: "#/components/schemas/StageEvalVectorStats"
+      discriminator:
+        propertyName: kind
+        mapping:
+          preprocess.canonical_spectrum: "#/components/schemas/StagePreprocessCanonicalSpectrum"
+          preprocess.pks_select_mm: "#/components/schemas/StagePreprocessPksSelectMm"
+          features.watchpoints: "#/components/schemas/StageFeaturesWatchpoints"
+          model.genetic_algorithm_summary: "#/components/schemas/StageModelGeneticAlgorithmSummary"
+          model.mlp_stub: "#/components/schemas/StageModelMlpStub"
+          model.rf_stub: "#/components/schemas/StageModelRfStub"
+          eval.vector_stats: "#/components/schemas/StageEvalVectorStats"
+
+    ExperimentSnapshotEnvelopePayload:
+      type: object
+      description: |
+        Forma aceite pelo BFF antes de montar `{ schema_version, payload }` enviado ao worker (`toWorkerExperimentEnvelope`).
+      required: [schema_version, payload]
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        payload:
+          $ref: "#/components/schemas/ExperimentSnapshotJobPayload"
+      additionalProperties: false
+
+    ExperimentSnapshotJobPayload:
+      type: object
+      description: |
+        Snapshot persistido do pipeline de experimento; o BFF valida forma (versão, tamanho, `stages`);
+        o worker executa estágios na ordem e valida dados numéricos. Ver NODE_CONTRACT.md § `mlms.experiment_snapshot`.
+        Estágio **`preprocess.pks_select_mm`** documenta o mapeamento MATLAB (`fn_pks_select_mm.m`, `fn_mmv_fuzzy.m`) → JSON em `PksSelectMmStageParams`.
+      required: [stages]
+      properties:
+        snapshot_version:
+          type: integer
+          enum: [1]
+          default: 1
+        experiment_id:
+          type: string
+          maxLength: 256
+          description: Correlaciona com recurso persistido no BFF quando existir.
+        stages:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/ExperimentSnapshotStage"
+      additionalProperties: true
+
+    CreateJobRequest:
+      oneOf:
+        - $ref: "#/components/schemas/CreateEchoJobRequest"
+        - $ref: "#/components/schemas/CreatePipelineStubJobRequest"
+        - $ref: "#/components/schemas/CreateGeneticAlgorithmJobRequest"
+        - $ref: "#/components/schemas/CreateWatchpointsJobRequest"
+        - $ref: "#/components/schemas/CreateMlpJobRequest"
+        - $ref: "#/components/schemas/CreateRandomForestJobRequest"
+        - $ref: "#/components/schemas/CreateExperimentSnapshotJobRequest"
+      discriminator:
+        propertyName: job_type
+        mapping:
+          mlms.echo: "#/components/schemas/CreateEchoJobRequest"
+          mlms.pipeline_stub: "#/components/schemas/CreatePipelineStubJobRequest"
+          mlms.genetic_algorithm: "#/components/schemas/CreateGeneticAlgorithmJobRequest"
+          mlms.watchpoints: "#/components/schemas/CreateWatchpointsJobRequest"
+          mlms.mlp: "#/components/schemas/CreateMlpJobRequest"
+          mlms.random_forest: "#/components/schemas/CreateRandomForestJobRequest"
+          mlms.experiment_snapshot: "#/components/schemas/CreateExperimentSnapshotJobRequest"
+
+    CreateEchoJobRequest:
+      type: object
+      required: [job_type]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.echo]
+        payload:
+          $ref: "#/components/schemas/EchoJobPayload"
+        job_id:
+          type: string
+          format: uuid
+          description: Opcional; correlaciona com o worker quando o Node reencaminha.
+        idempotency_key:
+          type: string
+          description: Alternativa ao header `Idempotency-Key` (precedência na implementação Nest).
+
+    CreatePipelineStubJobRequest:
+      type: object
+      required: [job_type]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.pipeline_stub]
+        payload:
+          $ref: "#/components/schemas/PipelineStubJobPayload"
+        job_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+
+    CreateGeneticAlgorithmJobRequest:
+      type: object
+      required: [job_type, payload]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.genetic_algorithm]
+        payload:
+          $ref: "#/components/schemas/GeneticAlgorithmJobPayload"
+        job_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+
+    CreateWatchpointsJobRequest:
+      type: object
+      required: [job_type, payload]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.watchpoints]
+        payload:
+          $ref: "#/components/schemas/WatchpointsJobPayload"
+        job_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+
+    CreateMlpJobRequest:
+      type: object
+      required: [job_type, payload]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.mlp]
+        payload:
+          $ref: "#/components/schemas/MlpJobPayload"
+        job_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+
+    CreateRandomForestJobRequest:
+      type: object
+      required: [job_type, payload]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.random_forest]
+        payload:
+          $ref: "#/components/schemas/RandomForestJobPayload"
+        job_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+
+    ExperimentSnapshotRequestPayload:
+      oneOf:
+        - $ref: "#/components/schemas/ExperimentSnapshotJobPayload"
+        - $ref: "#/components/schemas/ExperimentSnapshotEnvelopePayload"
+      description: |
+        Inline: corpo de pipeline (`stages`, …) ou envelope `{ schema_version, payload }` conforme `validateExperimentJobInlinePayload` no BFF.
+        **Não** enviar junto com `experiment_id` + `pipeline_revision_id`.
+
+    CreateExperimentSnapshotJobRequest:
+      type: object
+      description: |
+        **Exatamente uma** fonte de snapshot: (1) `experiment_id` e `pipeline_revision_id` (UUIDs) — o BFF resolve a revisão persistida em `/experiments`;
+        (2) `payload` — pipeline inline ou envelope (ver `ExperimentSnapshotRequestPayload`). Combinar (1) e (2) é rejeitado na validação do BFF.
+      required: [job_type]
+      properties:
+        job_type:
+          type: string
+          enum: [mlms.experiment_snapshot]
+        experiment_id:
+          type: string
+          format: uuid
+          description: Identificador do experimento no BFF; obrigatório junto com `pipeline_revision_id` quando não há `payload`.
+        pipeline_revision_id:
+          type: string
+          format: uuid
+          description: ID da revisão append-only; o BFF monta o corpo enviado ao worker.
+        payload:
+          $ref: "#/components/schemas/ExperimentSnapshotRequestPayload"
+        job_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+
+    JobStatus:
+      type: string
+      description: Estado do job no BFF (superconjunto lógico; o worker MVP devolve só completed/failed no POST direto).
+      enum:
+        - queued
+        - running
+        - completed
+        - failed
+        - cancelled
+
+    JobError:
+      type: object
+      description: |
+        Objeto aninhado em `Job.error` e em eventos SSE. Quando o BFF reencaminha `POST /v1/jobs` ao worker Rust (MVP síncrono),
+        os códigos devolvidos no JSON do worker (campo `error.code`) incluem: `invalid_job_type`, `unknown_job_type`,
+        `invalid_genetic_algorithm_payload`, `invalid_watchpoints_payload`, `invalid_mlp_payload`, `invalid_rf_payload`, `invalid_experiment_snapshot` — ver
+        [`NODE_CONTRACT.md`](../../services/mlms-worker/docs/NODE_CONTRACT.md) § erros.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: unknown_job_type
+        message:
+          type: string
+
+    Job:
+      type: object
+      required: [id, status, job_type, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador do job; num fluxo síncrono via worker, corresponde ao `job_id` devolvido pelo `mlms-worker`.
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        job_type:
+          $ref: "#/components/schemas/JobTypeMvp"
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Eco opcional do pedido (pode ser omitido por política de privacidade/tamanho).
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Resultado quando `status` é `completed` (forma alinhada ao worker quando aplicável).
+        error:
+          allOf:
+            - $ref: "#/components/schemas/JobError"
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    JobEvent:
+      type: object
+      description: Payload JSON recomendado dentro de `data:` no SSE.
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+        error:
+          allOf:
+            - $ref: "#/components/schemas/JobError"
+          nullable: true
+
+    ProblemDetails:
+      type: object
+      description: RFC 7807 Problem Details (`application/problem+json`).
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI de identificação do tipo de problema.
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+        code:
+          type: string
+          description: |
+            Extensão usada pelo BFF nas respostas **422** quando o erro espelha `error.code` do `POST /v1/jobs` do worker
+            (`invalid_job_type`, `unknown_job_type`, `invalid_genetic_algorithm_payload`, `invalid_watchpoints_payload`,
+            `invalid_mlp_payload`, `invalid_rf_payload`, `invalid_experiment_snapshot`; ver [`NODE_CONTRACT.md`](../../services/mlms-worker/docs/NODE_CONTRACT.md)).
+      additionalProperties: true
+
+  responses:
+    BadRequest:
+      description: Pedido mal formado
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    UnprocessableEntity:
+      description: Validação semântica (ex. corpo incompleto no PATCH)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Unauthorized:
+      description: Autenticação necessária ou token inválido
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    NotFound:
+      description: Recurso inexistente
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    InternalError:
+      description: Erro interno
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+
+security:
+  - bearerAuth: []

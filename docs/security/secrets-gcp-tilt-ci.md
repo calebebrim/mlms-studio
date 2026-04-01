@@ -8,7 +8,7 @@
 
 1. **Nada de segredos no Git** — chaves, client secrets, strings de sessão e URLs com credenciais ficam fora do repositório.
 2. **Produção:** [Google Cloud Secret Manager](https://cloud.google.com/secret-manager) como padrão; outro backend só com aprovação explícita do CTO/Security Lead.
-3. **Local:** ficheiro `.env` (não versionado), derivado de `.env.example` na raiz e de `projeto-web/.env.example` para o front.
+3. **Local:** ficheiro `.env` (não versionado), derivado de `.env.example` na raiz e de `services/mlms-spa/.env.example` para o front.
 
 ## Nomes sugeridos (Secret Manager)
 
@@ -34,7 +34,8 @@ Registar data da última rotação no runbook de incidentes ou na folha de contr
 
 ## Tilt e Docker Compose (local)
 
-- **Tilt** (`Tiltfile`): usa `docker_compose('./compose.yaml')`. Variáveis podem ser exportadas no shell antes de `tilt up` ou colocadas em `.env` na raiz; o Compose lê substituições quando usas `docker compose --env-file .env up` (o Tilt invoca o Compose com o mesmo ficheiro).
+- **Tilt** (`Tiltfile`): usa `docker_compose('./compose.yaml')` e `update_settings(max_parallel_updates=…)` para permitir **builds de imagem em paralelo** (worker, API, SPA). O valor efectivo depende da versão do Tilt e da carga da máquina; em hosts muito limitados, baixar o limite evita picos de CPU/RAM durante `docker build`.
+- **Variáveis:** podem ser exportadas no shell antes de `tilt up` ou colocadas em `.env` na raiz; o Compose lê substituições quando usas `docker compose --env-file .env up` (o Tilt invoca o Compose com o mesmo ficheiro).
 - **Compose:** valores não sensíveis podem permanecer em `compose.yaml`; credenciais de desenvolvimento apenas em `.env` local.
 - O serviço **web** usa `MLMS_WORKER_PROXY_TARGET`; o exemplo está em [`.env.example`](../../.env.example).
 

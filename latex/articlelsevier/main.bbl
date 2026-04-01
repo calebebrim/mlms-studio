@@ -1,0 +1,120 @@
+\begin{thebibliography}{10}
+\expandafter\ifx\csname url\endcsname\relax
+  \def\url#1{\texttt{#1}}\fi
+\expandafter\ifx\csname urlprefix\endcsname\relax\def\urlprefix{URL }\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\href#1#2{#2} \def\path#1{#1}\fi
+
+\bibitem{Arnold2006}
+R.~J. Arnold, N.~Jayasankar, D.~Aggarwal, H.~Tang, P.~Radivojac,
+  \href{http://www.ncbi.nlm.nih.gov/pubmed/17094241}{{A machine learning
+  approach to predicting peptide fragmentation spectra.}}, Pacific Symposium on
+  Biocomputing. Pacific Symposium on Biocomputing (2006) 219--30.
+\newline\urlprefix\url{http://www.ncbi.nlm.nih.gov/pubmed/17094241}
+
+\bibitem{Krishnamurthy1996}
+T.~Krishnamurthy, P.~L. Ross,
+  \href{http://www.ncbi.nlm.nih.gov/pubmed/9004531}{{Rapid identification of
+  bacteria by direct matrix-assisted laser desorption/ionization mass
+  spectrometric analysis of whole cells.}}, Rapid communications in mass
+  spectrometry : RCM 10~(15) (1996) 1992--6.
+\newblock \href
+  {http://dx.doi.org/10.1002/(SICI)1097-0231(199612)10:15<1992::AID-RCM789>3.0.CO;2-V}
+  {\path{doi:10.1002/(SICI)1097-0231(199612)10:15<1992::AID-RCM789>3.0.CO;2-V}}.
+\newline\urlprefix\url{http://www.ncbi.nlm.nih.gov/pubmed/9004531}
+
+\bibitem{Croxatto2012}
+A.~Croxatto, G.~Prod'hom, G.~Greub, Applications of {MALDI-TOF} mass
+  spectrometry in clinical diagnostic microbiology, FEMS Microbiology Reviews
+  36~(2) (2012) 380--407.
+\newblock \href {http://dx.doi.org/10.1111/j.1574-6976.2011.00316.x}
+  {\path{doi:10.1111/j.1574-6976.2011.00316.x}}.
+
+\bibitem{Wagner2003}
+M.~Wagner, D.~Naik, A.~Pothen, Protocols for disease classification from mass
+  spectrometry data, Proteomics 3~(9) (2003) 1692--1698.
+
+\bibitem{Yang2009}
+C.~Yang, Z.~He, W.~Yu,
+  \href{http://www.pubmedcentral.nih.gov/articlerender.fcgi?artid=2631518\&tool=pmcentrez\&rendertype=abstract}{{Comparison
+  of public peak detection algorithms for MALDI mass spectrometry data
+  analysis.}}, BMC bioinformatics 10 (2009) 4.
+\newblock \href {http://dx.doi.org/10.1186/1471-2105-10-4}
+  {\path{doi:10.1186/1471-2105-10-4}}.
+\newline\urlprefix\url{http://www.pubmedcentral.nih.gov/articlerender.fcgi?artid=2631518\&tool=pmcentrez\&rendertype=abstract}
+
+\bibitem{Conrads2004}
+T.~P. Conrads, V.~a. Fusaro, S.~Ross, D.~Johann, V.~Rajapakse, B.~a. Hitt,
+  S.~M. Steinberg, E.~C. Kohn, D.~a. Fishman, G.~Whitely, J.~C. Barrett, L.~a.
+  Liotta, E.~F. Petricoin, T.~D. Veenstra,
+  \href{http://www.ncbi.nlm.nih.gov/pubmed/15163296}{{High-resolution serum
+  proteomic features for ovarian cancer detection.}}, Endocrine-related cancer
+  11~(2) (2004) 163--78.
+\newline\urlprefix\url{http://www.ncbi.nlm.nih.gov/pubmed/15163296}
+
+\bibitem{Buchan2012}
+B.~W. Buchan, K.~M. Riebe, N.~a. Ledeboer,
+  \href{http://www.pubmedcentral.nih.gov/articlerender.fcgi?artid=3264150\&tool=pmcentrez\&rendertype=abstract}{{Comparison
+  of the MALDI Biotyper system using Sepsityper specimen processing to routine
+  microbiological methods for identification of bacteria from positive blood
+  culture bottles.}}, Journal of clinical microbiology 50~(2) (2012) 346--52.
+\newblock \href {http://dx.doi.org/10.1128/JCM.05021-11}
+  {\path{doi:10.1128/JCM.05021-11}}.
+\newline\urlprefix\url{http://www.pubmedcentral.nih.gov/articlerender.fcgi?artid=3264150\&tool=pmcentrez\&rendertype=abstract}
+
+\bibitem{Pluskal2010}
+T.~Pluskal, S.~Castillo, A.~Villar-Briones, M.~Oresic, {MZmine} 2: modular
+  framework for processing, visualizing, and analyzing mass spectrometry-based
+  molecular profile data, BMC Bioinformatics 11 (2010) 395.
+\newblock \href {http://dx.doi.org/10.1186/1471-2105-11-395}
+  {\path{doi:10.1186/1471-2105-11-395}}.
+
+\bibitem{Armananzas2011}
+R.~Armananzas, Y.~Saeys, I.~Inza, M.~Garcia-Torres, C.~Bielza, Y.~V.~D. Peer,
+  P.~Larranaga, {Peakbin Selection in Mass Spectrometry Data Using a Consensus
+  Approach with Estimation of Distribution Algorithms}, IEEE/ACM Transactions
+  on Computational Biology and Bioinformatics 8~(3) (2011) 760--774.
+\newblock \href {http://dx.doi.org/10.1109/TCBB.2010.18}
+  {\path{doi:10.1109/TCBB.2010.18}}.
+
+\bibitem{Liu2013}
+Y.~Liu, U.~Aickelin, J.~Feyereisl, L.~G. Durrant,
+  \href{http://dx.doi.org/10.1016/j.knosys.2012.09.011}{{Wavelet feature
+  extraction and genetic algorithm for biomarker detection in colorectal cancer
+  data}}, Knowledge-Based Systems 37 (2013) 502--514.
+\newblock \href {http://dx.doi.org/10.1016/j.knosys.2012.09.011}
+  {\path{doi:10.1016/j.knosys.2012.09.011}}.
+\newline\urlprefix\url{http://dx.doi.org/10.1016/j.knosys.2012.09.011}
+
+\bibitem{Surek2010}
+M.~Surek, B.~S. Vizzotto, E.~M. Souza, F.~D.~O. Pedrosa, C.~B. Dallagassa,
+  S.~M. S.~S. Farah, C.~M.~T. Fadel-Picheth, {Identification and antimicrobial
+  susceptibility of Aeromonas spp. isolated from stool samples of Brazilian
+  subjects with diarrhoea and healthy controls}, Journal of Medical
+  Microbiology 59 (2010) 373--374.
+\newblock \href {http://dx.doi.org/10.1099/jmm.0.014258-0}
+  {\path{doi:10.1099/jmm.0.014258-0}}.
+
+\bibitem{Tomasi2011}
+G.~Tomasi, F.~Savorani, S.~r.~B. Engelsen,
+  \href{http://dx.doi.org/10.1016/j.chroma.2011.08.086}{{Icoshift: An effective
+  tool for the alignment of chromatographic data}}, Journal of Chromatography A
+  1218~(43) (2011) 7832--7840.
+\newblock \href {http://dx.doi.org/10.1016/j.chroma.2011.08.086}
+  {\path{doi:10.1016/j.chroma.2011.08.086}}.
+\newline\urlprefix\url{http://dx.doi.org/10.1016/j.chroma.2011.08.086}
+
+\bibitem{Powers2011}
+D.~M.~W. Powers, Evaluation: from precision, recall and {F}-measure to {ROC},
+  informedness, markedness and correlation, Journal of Machine Learning
+  Technologies 2~(1) (2011) 37--63.
+
+\bibitem{Bohme2010}
+K.~B{\"o}hme, I.~C. Fern\'{a}ndez-No, J.~Barros-Vel\'{a}zquez, J.~M. Gallardo,
+  P.~Carlo-Mata, B.~Ca\~{n}as,
+  \href{http://pubs.acs.org/doi/abs/10.1021/pr100047q}{{Species differentiation
+  of seafood spoilage and pathogenic gram-negative bacteria by MALDI-TOF mass
+  fingerprinting}}, Joural of proteome research (2010) 3169--3183.
+\newline\urlprefix\url{http://pubs.acs.org/doi/abs/10.1021/pr100047q}
+
+\end{thebibliography}
