@@ -6,6 +6,7 @@
 \usepackage{float}
 \usepackage{amssymb,natbib}
 \usepackage{booktabs}
+\usepackage{microtype}
 
 \journal{Knowledge Based Systems}
 
@@ -29,7 +30,7 @@
 \ead{raittz@ufpr.br}
 
 \begin{abstract}
-\textbf{MS-ML Studio} is an open-source MATLAB application that unifies mass-spectrometry (MS) preprocessing, three complementary feature extractors with embedded K-fold cross-validation, and multilayer perceptron (MLP) classification. This note summarizes the \textbf{algorithmic pipeline}---normalization, reshaping, optional Icoshift alignment, fuzzy moving-average peak detection, correlation- and probability-based peak selection, Watch Points, Feature Resonance with genetic-algorithm (GA) optimization, and MLP training---as implemented in the MS-ML Library and GUI. An illustrative intact-cell MALDI-TOF \textit{Aeromonas} case study~\cite{Surek2010,Croxatto2012} is referenced only to anchor partitions and metrics; claims remain proof-of-concept software validation, not clinical benchmarking.
+\textbf{MS-ML Studio} is an open-source MATLAB application that unifies mass-spectrometry (MS) preprocessing, three complementary feature extractors with embedded K-fold cross-validation, and multilayer perceptron (MLP) classification. This note summarizes the \textbf{algorithmic pipeline} implemented in the MS-ML Library and GUI\@: normalization, reshaping, optional Icoshift alignment, fuzzy moving-average peak detection, correlation- and probability-based peak selection, Watch Points, Feature Resonance with genetic-algorithm (GA) optimization, and MLP training. An illustrative intact-cell MALDI-TOF \textit{Aeromonas} case study~\cite{Surek2010,Croxatto2012} anchors partitions and metrics only; scope remains proof-of-concept software validation, not clinical benchmarking.
 \end{abstract}
 
 \begin{keyword}
@@ -60,15 +61,20 @@ N(x, x_{\max}, x_{\min}) = \frac{x_i - x_{\min}}{x_{\max} - x_{\min}}\,.
 \end{equation}
 
 \subsubsection{Reshaping}
-Each spectrum is binned onto $W$ evenly spaced grid points over the global m/z range; per-bin intensity is the maximum of contributing points and m/z is the mean of their positions~\cite{Liu2013} (full discrete definition in the long manuscript).
+Each spectrum is binned onto $W$ evenly spaced grid points over the global m/z range. Let $G$ map raw indices to grid bins via normalized coordinates~\cite{Liu2013}:
+\begin{equation}
+G(x; W, x_{\max}, x_{\min}) = \mathrm{round}\left(W \cdot N(x; x_{\max}, x_{\min})\right)\,,
+\label{eq:reshape}
+\end{equation}
+with $N$ from Eq.~\eqref{eq:norm}. Per-bin intensity is the maximum of contributing points; the reported m/z is the mean of their positions (see full manuscript for tie-breaking and edge bins).
 
 \subsubsection{Alignment}
 Optional alignment uses Icoshift~\cite{Tomasi2011} on user-selected m/z windows after reshaping.
 
 \subsubsection{Fuzzy moving average (FMA) peaks}
-At position $p$, a triangular-window local average $S(x;p,w)$ (Eq.~\ref{eq:fma}) highlights local maxima as candidate peaks; $w$ is half-width and $T$ the triangular weight (same functional form as Watch Points below).
+At position $p$, a triangular-window local average $S(x;p,w_h)$ (Eq.~\ref{eq:fma}) highlights local maxima as candidate peaks; $w_h$ is half-width and $T$ the discrete triangular weight (same functional form as $\omega$ for Watch Points below).
 \begin{equation}
-S(x; p, w) = \frac{\sum_{i=p-w}^{p+w} x_i \cdot T(2w+1, i)}{2w+1}\,.
+S(x; p, w_h) = \frac{\sum_{i=p-w_h}^{p+w_h} x_i \cdot T(2w_h+1, i)}{2w_h+1}\,.
 \label{eq:fma}
 \end{equation}
 
@@ -79,20 +85,20 @@ From FMA candidates, \textbf{correlation-based} selection scores each peak's pre
 All GA-driven extractors embed K-fold cross-validation: a configuration is retained only if the mean of training and validation correlations improves~\cite{Liu2013}.
 
 \subsubsection{Watch Points}
-For odd window length $L$, triangular weights are
+For odd window length $L$, triangular weights $\omega(L,n)$ are
 \begin{equation}
-w(L,n) = \begin{cases} \dfrac{2n}{L+1} & 1 \leq n \leq \dfrac{L+1}{2} \\[\medskipamount]
+\omega(L,n) = \begin{cases} \dfrac{2n}{L+1} & 1 \leq n \leq \dfrac{L+1}{2} \\[\medskipamount]
 2 - \dfrac{2n}{L+1} & \dfrac{L+1}{2}+1 \leq n \leq L \end{cases}\,.
 \end{equation}
-(Even $L$ uses the paired formulas in the repository manuscript.) Feature $W_k$ for watch point $k$ is the dot product of weights with the binary peak vector; the GA optimizes half-widths $\{L_k\}$.
+(Even $L$ uses the paired formulas in the repository manuscript.) Feature $W_k$ for watch point $k$ is the dot product of $\omega(L_k,\cdot)$ with the binary peak vector; the GA optimizes half-widths $\{L_k\}$.
 
 \subsubsection{Feature Resonance}
 Peaks are encoded via a sum of $M$ sinusoids with GA-tuned parameters:
 \begin{equation}
-S(x; \mathbf{a}, \mathbf{b}, \mathbf{c}) = \sum_{i=1}^{M} a_i \sin(b_i + c_i x)\,.
+R(x; \mathbf{a}, \mathbf{b}, \mathbf{c}) = \sum_{i=1}^{M} a_i \sin(b_i + c_i x)\,.
 \label{eq:resonance}
 \end{equation}
-Fitness is the mean absolute Pearson correlation between $S$ and labels; variants operate on m/z grids, best-peak intensities, m/z values, or watch-point vectors.
+Fitness is the mean absolute Pearson correlation between $R$ and labels; variants operate on m/z grids, best-peak intensities, m/z values, or watch-point vectors.
 
 \subsection{Classification and metrics}
 Features from enabled extractors are concatenated and fed to an MLP (Levenberg--Marquardt). Accuracy, precision, recall, and F1 follow standard definitions~\cite{Powers2011}. ARFF export enables external classifiers (e.g.\ WEKA).
@@ -120,6 +126,9 @@ Held-out test accuracies and F1-scores on this reference task are reported in th
 
 \section{Conclusion}
 MS-ML Studio implements a closed pipeline from text spectra through GA-regularized feature extractors to MLP classification. This compact note documents the methodological core; extended results, discussion, limitations, and availability match \texttt{latex/articlelsevier/main.tex}.
+
+\paragraph{Limitations (pointers).}
+Plain-text spectra only (no native mzML/mzXML), MATLAB or MATLAB Runtime dependency, fixed MLP backend, and GA hyperparameters (population, generations, stopping rules) set via the GUI---full defaults and reproducibility checklist belong in the long manuscript or supplemental material.
 
 \section*{Acknowledgements}
 Dataset acknowledgment follows Surek \textit{et al.}~\cite{Surek2010}; institutional support as in the full manuscript.
