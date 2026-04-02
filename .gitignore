@@ -16,3 +16,12 @@ mlmssoftware-code-r7.zip
 *.exe
 *.mat
 matlab-code/GUI/compile
+
+# LaTeX — artefactos de build (PDF do method_small permanece versionado)
+latex/articlelsevier_method_small/*.aux
+latex/articlelsevier_method_small/*.bbl
+latex/articlelsevier_method_small/*.blg
+latex/articlelsevier_method_small/*.log
+latex/articlelsevier_method_small/*.out
+latex/articlelsevier_method_small/*.spl
+latex/articlelsevier_method_small/*.toc
